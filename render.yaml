@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: telegram-bot-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --worker-class eventlet -w 1 api:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: BOT_TOKEN
+        sync: false
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: CHAT_ID
+        sync: false
+      - key: ADMIN_USER_ID
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: GROUP_INVITE_LINK
+        sync: false
+      - key: CHANNEL_URL
+        sync: false
+      - key: WELCOME_MESSAGE
+        sync: false
+      - key: WELCOME_TEXT
+        sync: false 
