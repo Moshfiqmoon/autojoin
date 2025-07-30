@@ -7,7 +7,6 @@ from flask_socketio import SocketIO, emit, join_room
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from threading import Thread
-from config import BOT_TOKEN, DASHBOARD_PASSWORD, CHANNEL_ID, GROUP_INVITE_LINK, CHANNEL_URL
 import datetime
 import traceback
 
@@ -26,16 +25,18 @@ from pyrogram import filters as pyro_filters
 from telegram import InputMediaPhoto, InputMediaVideo, InputMediaAudio
 
 app = Flask(__name__)
-app.secret_key = 'change_this_secret_key'
+app.secret_key = os.environ.get('SECRET_KEY', 'change_this_secret_key')
 CORS(app, origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://192.168.1.3:3000"
+    "http://192.168.1.3:3000",
+    "https://your-frontend-domain.onrender.com"  # Add your frontend domain
 ], supports_credentials=True)
-socketio = SocketIO(app, async_mode='threading', cors_allowed_origins=[
+socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://192.168.1.3:3000"
+    "http://192.168.1.3:3000",
+    "https://your-frontend-domain.onrender.com"  # Add your frontend domain
 ])
 
 DB_NAME = 'users.db'
@@ -229,6 +230,7 @@ def get_channel_invite_link():
         return jsonify({'error': str(e)}), 500
 
 # --- Telegram Bot Handlers ---
+BOT_TOKEN = os.environ.get('BOT_TOKEN', config.BOT_TOKEN)
 bot = Bot(BOT_TOKEN)
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
@@ -383,14 +385,17 @@ application.add_handler(MessageHandler(tg_filters.AUDIO, user_message_handler))
 application.add_handler(ChatJoinRequestHandler(approve_join))
 
 # Pyrogram Bot Setup
+API_ID = int(os.environ.get('API_ID', config.API_ID))
+API_HASH = os.environ.get('API_HASH', config.API_HASH)
+CHAT_ID = int(os.environ.get('CHAT_ID', config.CHAT_ID))
+
 pyro_app = Client(
     "AutoApproveBot",
-    bot_token=config.BOT_TOKEN,
-    api_id=config.API_ID,
-    api_hash=config.API_HASH
+    bot_token=BOT_TOKEN,
+    api_id=API_ID,
+    api_hash=API_HASH
 )
 
-CHAT_ID = config.CHAT_ID
 WELCOME_TEXT = getattr(config, "WELCOME_TEXT", "🎉 Hi {mention}, you are now a member of {title}!")
 
 @pyro_app.on_chat_join_request(pyro_filters.chat(CHAT_ID))
@@ -682,8 +687,11 @@ def on_join(data):
     join_room(room)
 
 if __name__ == '__main__':
+    # For Render deployment
+    port = int(os.environ.get('PORT', 5001))
+    
     # Start Flask-SocketIO in a thread
-    flask_thread = Thread(target=lambda: socketio.run(app, port=5001, debug=False), daemon=True)
+    flask_thread = Thread(target=lambda: socketio.run(app, port=port, debug=False, host='0.0.0.0'), daemon=True)
     flask_thread.start()
 
     # Start Telegram bot (for user messages) in a thread
