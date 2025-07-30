@@ -30,12 +30,14 @@ CORS(app, origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://192.168.1.3:3000",
+    "https://autojoin-d569.onrender.com",
     "https://your-frontend-domain.onrender.com"  # Add your frontend domain
 ], supports_credentials=True)
-socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins=[
+socketio = SocketIO(app, async_mode='threading', cors_allowed_origins=[
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://192.168.1.3:3000",
+    "https://autojoin-d569.onrender.com",
     "https://your-frontend-domain.onrender.com"  # Add your frontend domain
 ])
 
@@ -151,57 +153,77 @@ def user_status(user_id):
 # --- Flask API Endpoints ---
 @app.route('/dashboard-users')
 def dashboard_users():
-    # Get page and page_size from query params, default page=1, page_size=10
-    page = int(request.args.get('page', 1))
-    page_size = int(request.args.get('page_size', 10))
-    offset = (page - 1) * page_size
+    try:
+        # Get page and page_size from query params, default page=1, page_size=10
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 10))
+        offset = (page - 1) * page_size
 
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM users')
-    total = c.fetchone()[0]
-    c.execute('SELECT user_id, full_name, username, join_date, invite_link, photo_url, label FROM users ORDER BY join_date DESC LIMIT ? OFFSET ?', (page_size, offset))
-    users = c.fetchall()
-    conn.close()
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute('SELECT COUNT(*) FROM users')
+        total = c.fetchone()[0]
+        c.execute('SELECT user_id, full_name, username, join_date, invite_link, photo_url, label FROM users ORDER BY join_date DESC LIMIT ? OFFSET ?', (page_size, offset))
+        users = c.fetchall()
+        conn.close()
 
-    # Add online status for each user
-    users_with_status = []
-    for u in users:
-        is_online = get_user_online_status(u[0], 5)
-        users_with_status.append({
-                'user_id': u[0],
-                'full_name': u[1],
-                'username': u[2],
-                'join_date': u[3],
-            'invite_link': u[4],
-            'photo_url': u[5],
-            'is_online': is_online,
-            'label': u[6]
+        # Add online status for each user
+        users_with_status = []
+        for u in users:
+            is_online = get_user_online_status(u[0], 5)
+            users_with_status.append({
+                    'user_id': u[0],
+                    'full_name': u[1],
+                    'username': u[2],
+                    'join_date': u[3],
+                'invite_link': u[4],
+                'photo_url': u[5],
+                'is_online': is_online,
+                'label': u[6]
+            })
+
+        return jsonify({
+            'users': users_with_status,
+            'total': total,
+            'page': page,
+            'page_size': page_size
         })
-
-    return jsonify({
-        'users': users_with_status,
-        'total': total,
-        'page': page,
-        'page_size': page_size
-    })
+    except Exception as e:
+        print(f"Error in dashboard-users: {e}")
+        return jsonify({
+            'users': [],
+            'total': 0,
+            'page': 1,
+            'page_size': 10,
+            'error': str(e)
+        }), 500
 
 @app.route('/dashboard-stats')
 def dashboard_stats():
-    # Total users in the database
-    total_users = get_total_users()
-    # Active users: users who sent messages in the last 60 minutes
-    active_users = get_active_users()  # last 60 minutes
-    # Total messages sent (all time)
-    total_messages = get_total_messages()
-    # New joins today
-    new_joins_today = get_new_joins_today()
-    return jsonify({
-        'total_users': total_users,
-        'active_users': active_users,
-        'total_messages': total_messages,
-        'new_joins_today': new_joins_today
-    })
+    try:
+        # Total users in the database
+        total_users = get_total_users()
+        # Active users: users who sent messages in the last 60 minutes
+        active_users = get_active_users()  # last 60 minutes
+        # Total messages sent (all time)
+        total_messages = get_total_messages()
+        # New joins today
+        new_joins_today = get_new_joins_today()
+        return jsonify({
+            'total_users': total_users,
+            'active_users': active_users,
+            'total_messages': total_messages,
+            'new_joins_today': new_joins_today
+        })
+    except Exception as e:
+        print(f"Error in dashboard-stats: {e}")
+        return jsonify({
+            'total_users': 0,
+            'active_users': 0,
+            'total_messages': 0,
+            'new_joins_today': 0,
+            'error': str(e)
+        }), 500
 
 @app.route('/chat/<int:user_id>/messages')
 def chat_messages(user_id):
@@ -686,34 +708,28 @@ def on_join(data):
     room = data.get('room')
     join_room(room)
 
+@app.route('/')
+def health_check():
+    return jsonify({
+        'status': 'ok',
+        'message': 'Telegram Bot API is running',
+        'timestamp': datetime.datetime.now().isoformat()
+    })
+
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'healthy',
+        'api': 'running',
+        'database': 'connected' if os.path.exists(DB_NAME) else 'not_found'
+    })
+
 if __name__ == '__main__':
     # For Render deployment
     port = int(os.environ.get('PORT', 5001))
     
-    # Start Flask-SocketIO in a thread
-    flask_thread = Thread(target=lambda: socketio.run(app, port=port, debug=False, host='0.0.0.0'), daemon=True)
-    flask_thread.start()
-
-    # Start Telegram bot (for user messages) in a thread
-    def run_telegram_bot():
-        print("Telegram bot running and waiting for user messages...")
-        import asyncio
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        try:
-            application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-        except Exception as e:
-            print(f"Telegram bot error: {e}")
-            # Restart after delay
-            import time
-            time.sleep(5)
-            run_telegram_bot()
-
-    telegram_thread = Thread(target=run_telegram_bot, daemon=True)
-    telegram_thread.start()
-
-    # Start Pyrogram bot in main thread (for join requests)
-    print("Pyrogram bot running and waiting for join requests...")
-    try:
-        pyro_app.run()
-    except Exception as e:
-        print(f"Pyrogram bot error: {e}") 
+    print(f"🚀 Starting Telegram Bot API on port {port}")
+    print(f"🌐 API URL: https://autojoin-d569.onrender.com")
+    
+    # Start Flask-SocketIO directly (no threading for Render)
+    socketio.run(app, port=port, debug=False, host='0.0.0.0') 
