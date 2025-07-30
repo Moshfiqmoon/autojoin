@@ -5,8 +5,16 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
 import datetime
 import traceback
+import asyncio
+from threading import Thread
+
+# Pyrogram imports
+from pyrogram import Client, filters
+from pyrogram.types import ChatJoinRequest
+from pyrogram import filters as pyro_filters
 
 from db import init_db
+import config
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'change_this_secret_key')
@@ -29,6 +37,58 @@ DB_NAME = 'users.db'
 
 # Ensure DB tables exist
 init_db()
+
+# Pyrogram Bot Setup
+BOT_TOKEN = os.environ.get('BOT_TOKEN', config.BOT_TOKEN)
+API_ID = int(os.environ.get('API_ID', config.API_ID))
+API_HASH = os.environ.get('API_HASH', config.API_HASH)
+CHAT_ID = int(os.environ.get('CHAT_ID', config.CHAT_ID))
+
+pyro_app = Client(
+    "AutoApproveBot",
+    bot_token=BOT_TOKEN,
+    api_id=API_ID,
+    api_hash=API_HASH
+)
+
+WELCOME_TEXT = getattr(config, "WELCOME_TEXT", "🎉 Hi {mention}, you are now a member of {title}!")
+
+@pyro_app.on_chat_join_request(pyro_filters.chat(CHAT_ID))
+async def approve_and_dm(client: Client, join_request: ChatJoinRequest):
+    user = join_request.from_user
+    chat = join_request.chat
+
+    await client.approve_chat_join_request(chat.id, user.id)
+    print(f"Approved: {user.first_name} ({user.id}) in {chat.title}")
+
+    # Add user to DB
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    username = user.username or ''
+    join_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    invite_link = None  # Pyrogram does not provide invite_link in join request
+    add_user(user.id, full_name, username, join_date, invite_link)
+
+    try:
+        await client.send_message(
+            user.id,
+            WELCOME_TEXT.format(mention=user.mention, title=chat.title)
+        )
+        print(f"DM sent to {user.first_name} ({user.id})")
+    except Exception as e:
+        print(f"Failed to send DM to {user.first_name} ({user.id}): {e}")
+
+def run_pyrogram_bot():
+    """Start the Pyrogram bot in a separate thread"""
+    try:
+        print("🔥 Starting Pyrogram bot...")
+        pyro_app.run()
+        print("✅ Pyrogram bot started successfully")
+    except Exception as e:
+        print(f"❌ Pyrogram bot error: {e}")
+
+# Start Pyrogram bot in background thread
+pyro_thread = Thread(target=run_pyrogram_bot, daemon=True)
+pyro_thread.start()
 
 # --- Database helpers ---
 def get_all_users():
@@ -283,4 +343,5 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     print(f"🚀 Starting Simplified Telegram Bot API on port {port}")
     print(f"🌐 API URL: https://autojoin-d569.onrender.com")
+    print(f"🔥 Pyrogram bot will start in background")
     socketio.run(app, port=port, debug=False, host='0.0.0.0') 
